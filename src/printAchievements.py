@@ -4,7 +4,7 @@ from buttons import Buttons
 from playerStats import PlayerStats
 
 buttons = Buttons('../data/buttons.json')
-stats = PlayerStats('../data/bmstats.txt')
+stats = PlayerStats('../data/bmstats.json')
 
 completed = []
 close = []
