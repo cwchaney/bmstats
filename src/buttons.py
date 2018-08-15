@@ -47,13 +47,15 @@ class Buttons:
 		return buttons
 
 	def getSets(self):
-		#return sorted(list(self.sets))
-		return sorted(filter(lambda s: len(self.getButtons(s)) > 2, list(self.sets)) + ['Miscellaneous'])
+		listWithMisc = list(filter(lambda s: len(self.getButtons(s)) > 2, list(self.sets))) + ['Miscellaneous']
+		return sorted(listWithMisc)
 
-#filename = '../data/buttons.json'
+filename = '../data/buttons.json'
 
 #buttons = Buttons(filename)
 #misc = buttons.getButtons('Miscellaneous', False)
+#sets = buttons.getSets()
 #print misc
-#print len(misc)
+#print(len(misc))
+#print(len(sets))
 

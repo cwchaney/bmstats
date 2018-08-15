@@ -29,71 +29,7 @@ def dbConnect():
 	connString = "host='localhost' dbname='bmstats' user='craigcw' password='hello1'"
 	return psycopg2.connect(connString)
 
-def createTables():
-	conn = dbConnect()
-	cur = conn.cursor()
-	for table, columns in TABLES.items():
-		command = "CREATE TABLE " + table + " ( "
-		first = True
-		for column in columns:
-			if first:
-				first = False
-			else:
-				command = command + ", "
-			command = command + column
-		command = command + " )"
-		cur.execute(command)
-	cur.close()
-	conn.commit()
-
-def initializeButtonData(filename):
-	conn = dbConnect()
-	cur = conn.cursor()
-	with open(filename, 'r') as fileIn:
-		data = json.load(fileIn)
-
-	buttonList = data['data']
-	sets = {}
-
-	# Create special unknown set
-	cur.execute("insert into button_sets(button_set_name) values('Unknown')")
-	sets['Unknown'] = 1
-	
-	for button in buttonList:
-		buttonName = button['buttonName']
-		setName = button['buttonSet']
-
-		if setName not in sets:
-			sql = "insert into button_sets(button_set_name) values(%s) returning button_set_id"
-			cur.execute(sql, (setName,))
-			sets[setName] = cur.fetchone()[0]
-		buttonSetId = sets[setName]
-
-		sql = "insert into buttons(button_id, button_name, button_set_id, tourney_legal) values(%s, %s, %s, %s)"
-		buttonId = button['buttonId']
-		buttonName = button['buttonName']
-		tourneyLegal = button['isTournamentLegal']
-		cur.execute(sql, (buttonId, buttonName, str(buttonSetId), tourneyLegal,))
-
-	cur.close()
-	conn.commit()
-
-def dropTables():
-	conn = dbConnect()
-	cur = conn.cursor()
-	try:
-		for table in list(TABLES):
-			command = "DROP TABLE " + table
-			cur.execute(command)
-	except (Exception, psycopg2.ProgrammingError) as error:
-		# EAT IT
-		pass
-	finally:
-		cur.close()
-		conn.commit()
-
-def retrieveGameData(pageNum):
-	#login
+def retrieveGameData(pageNum, printOnly=False):
 	loginBody = {
 		'type' : 'login',
 		'username' : 'hitchhucker',
@@ -105,7 +41,7 @@ def retrieveGameData(pageNum):
 		raise Exception('Login status was not ok:  ' + loginResponse['status'])
 
 	statsBody = {
-		'lastMoveMin' : '1390000000',
+		'lastMoveMin' : '1533935635',
 		'status' : 'COMPLETE',
 		'sortColumn' : 'lastMove',
 		'sortDirection' : 'ASC',
@@ -115,22 +51,25 @@ def retrieveGameData(pageNum):
 		'automatedApiCall' : 'false',
 	}
 	r = requests.post('http://www.buttonweavers.com/api/responder', data = statsBody, cookies = login.cookies)
-	statsResponse = json.loads(r.text)
-	if statsResponse['status'] != 'ok':
-		raise Exception('Stats  status was not ok:  ' + statsResponse['status'])
-
-	with open('save_%03d.txt' % pageNum, 'w') as outputFile:
-		print(r.text, file=outputFile)
-
-def saveGameData(filename):
-	with open(filename, 'r') as fileIn:
-		gameData = json.load(fileIn)
+	if printOnly:
+		print(r.text)
+		return
+	gameData = json.loads(r.text)
+	if gameData['status'] != 'ok':
+		raise Exception('Stats  status was not ok:  ' + gameData['status'])
+	gamesList = gameData['data']['games']
 
 	conn = dbConnect()
 	cur = conn.cursor()
 	try:
-		gamesList = gameData['data']['games']
+		latestMove = 0
 		for game in gamesList:
+			sql = "select count(*) from games where game_id=%s"
+			cur.execute(sql, (game['gameId'],))
+			countResult = cur.fetchone()[0]
+			if countResult != 0:
+				raise Exception('Should not see same gameId twice: ' + str(game['gameId']))
+
 			sql = "insert into games(game_id, player_a, player_b, button_a, button_b, rounds_won_a, rounds_won_b, rounds_drawn, a_won, game_start, last_move) values(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
 			buttonA = getButtonId(game['buttonNameA'], cur)
 			buttonB = getButtonId(game['buttonNameB'], cur)
@@ -142,9 +81,13 @@ def saveGameData(filename):
 			lastMove = datetime.datetime.fromtimestamp(game['lastMove']).date()
 			cur.execute(sql, (gameId, game['playerNameA'], game['playerNameB'], buttonA, buttonB, 
 				roundsWonA, roundsWonB, game['roundsDrawn'], aWon, gameStart, lastMove,))
+			latestMove = max(latestMove, int(game['lastMove']))
+		cur.execute("insert into properties(key, value) values(%s, %s)", ('latestMove', str(latestMove),))
+		cur.execute("update properties set value=%s where key=%s", (str(latestMove), 'latestMove',))
 	finally:
 		cur.close()
 		conn.commit()
+
 
 def getButtonId(buttonName, cur):
 	global UNKNOWN_INDEX
@@ -162,11 +105,6 @@ def getButtonId(buttonName, cur):
 		UNKNOWN_INDEX = UNKNOWN_INDEX + 1
 		return index
 
-#dropTables()
-#createTables()
-#initializeButtonData('../data/buttons.json')
-#for i in range(1, 377):
-	##getGameData(i, False)
-	#saveGameData('../data/games/save_%03d.txt' % i)
-	#print("Page " + str(i))
-	##time.sleep(300) # 5 minutes
+retrieveGameData(1)
+retrieveGameData(2)
+retrieveGameData(3)
