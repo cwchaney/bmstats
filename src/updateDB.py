@@ -29,7 +29,7 @@ def dbConnect():
 	connString = "host='localhost' dbname='bmstats' user='craigcw' password='hello1'"
 	return psycopg2.connect(connString)
 
-def retrieveGameData(pageNum, printOnly=False):
+def retrieveGameData(printOnly):
 	loginBody = {
 		'type' : 'login',
 		'username' : 'hitchhucker',
@@ -40,35 +40,50 @@ def retrieveGameData(pageNum, printOnly=False):
 	if loginResponse['status'] != 'ok':
 		raise Exception('Login status was not ok:  ' + loginResponse['status'])
 
-	statsBody = {
-		'lastMoveMin' : '1533935635',
-		'status' : 'COMPLETE',
-		'sortColumn' : 'lastMove',
-		'sortDirection' : 'ASC',
-		'numberOfResults' : '100',
-		'page' : str(pageNum),
-		'type' : 'searchGameHistory',
-		'automatedApiCall' : 'false',
-	}
-	r = requests.post('http://www.buttonweavers.com/api/responder', data = statsBody, cookies = login.cookies)
-	if printOnly:
-		print(r.text)
-		return
-	gameData = json.loads(r.text)
-	if gameData['status'] != 'ok':
-		raise Exception('Stats  status was not ok:  ' + gameData['status'])
-	gamesList = gameData['data']['games']
-
 	conn = dbConnect()
 	cur = conn.cursor()
 	try:
-		latestMove = 0
+		cur.execute('select value from properties where key = \'latestMove\'')
+		prevLastMove = cur.fetchone()[0]
+		print(prevLastMove)
+		gamesList = []
+		pageNum=1
+		while True:
+			statsBody = {
+				'lastMoveMin' : str(int(prevLastMove) + 1),
+				'status' : 'COMPLETE',
+				'sortColumn' : 'lastMove',
+				'sortDirection' : 'ASC',
+				'numberOfResults' : '100',
+				'page' : str(pageNum),
+				'type' : 'searchGameHistory',
+				'automatedApiCall' : 'false',
+			}
+			pageNum = pageNum + 1
+			r = requests.post('http://www.buttonweavers.com/api/responder', data = statsBody, cookies = login.cookies)
+			#if printOnly:
+				#print(r.text)
+				#return
+			gameData = json.loads(r.text)
+			if gameData['status'] != 'ok':
+				raise Exception('Stats  status was not ok:  ' + gameData['status'])
+			newGameList = gameData['data']['games']
+			if len(newGameList) == 0:
+				break
+			gamesList.extend(newGameList)
+		if printOnly:
+			print(len(gamesList))
+			return
+
+		prevLastMove = 0
 		for game in gamesList:
 			sql = "select count(*) from games where game_id=%s"
 			cur.execute(sql, (game['gameId'],))
 			countResult = cur.fetchone()[0]
 			if countResult != 0:
-				raise Exception('Should not see same gameId twice: ' + str(game['gameId']))
+				print('Should not see same gameId twice: ' + str(game['gameId']))
+				#raise Exception('Should not see same gameId twice: ' + str(game['gameId']))
+				continue
 
 			sql = "insert into games(game_id, player_a, player_b, button_a, button_b, rounds_won_a, rounds_won_b, rounds_drawn, a_won, game_start, last_move) values(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
 			buttonA = getButtonId(game['buttonNameA'], cur)
@@ -81,8 +96,8 @@ def retrieveGameData(pageNum, printOnly=False):
 			lastMove = datetime.datetime.fromtimestamp(game['lastMove']).date()
 			cur.execute(sql, (gameId, game['playerNameA'], game['playerNameB'], buttonA, buttonB, 
 				roundsWonA, roundsWonB, game['roundsDrawn'], aWon, gameStart, lastMove,))
-			latestMove = max(latestMove, int(game['lastMove']))
-		cur.execute("insert into properties(key, value) values(%s, %s)", ('latestMove', str(latestMove),))
+			latestMove = max(prevLastMove, int(game['lastMove']))
+		#cur.execute("insert into properties(key, value) values(%s, %s)", ('latestMove', str(latestMove),))
 		cur.execute("update properties set value=%s where key=%s", (str(latestMove), 'latestMove',))
 	finally:
 		cur.close()
@@ -105,6 +120,4 @@ def getButtonId(buttonName, cur):
 		UNKNOWN_INDEX = UNKNOWN_INDEX + 1
 		return index
 
-retrieveGameData(1)
-retrieveGameData(2)
-retrieveGameData(3)
+retrieveGameData(False)
